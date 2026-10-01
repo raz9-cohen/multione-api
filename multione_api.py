@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 import math
 from normalizers import normalize_multione_machine
+from peruzzo_api import router as peruzzo_router
 
 app = FastAPI()
 
@@ -185,3 +186,5 @@ def get_multione_machine(serial: str):
     )
 
     return normalized
+
+app.include_router(peruzzo_router)
