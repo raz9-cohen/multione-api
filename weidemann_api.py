@@ -1,6 +1,7 @@
 import os
 import re
 import requests
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, APIRouter, HTTPException
 from playwright.sync_api import sync_playwright
@@ -72,7 +73,7 @@ def _wait_until_shop(context, page):
 
     for _ in range(90):
         for open_page in context.pages:
-            if "shop.weidemann-online.com" in open_page.url:
+            if urlparse(open_page.url).hostname == "shop.weidemann-online.com":
                 shop_page = open_page
                 break
 
