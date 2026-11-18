@@ -20,6 +20,100 @@ OAUTH_URL = f"{BASE_URL}/estore/pgk/de/oauth"
 # LOGIN
 # --------------------------------------------------
 
+def _submit_containing_form(field):
+    field.locator("xpath=ancestor::form[1]").locator(
+        'input[type="submit"]:visible, button[type="submit"]:visible'
+    ).first.click()
+
+
+def _visible_login_problem(page):
+    return page.evaluate(
+        """() => {
+            const visible = (el) => {
+                const box = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return box.width > 0
+                    && box.height > 0
+                    && style.visibility !== "hidden"
+                    && style.display !== "none";
+            };
+
+            const errors = [...document.querySelectorAll(
+                ".gigya-error-msg, .gigya-form-error-msg"
+            )].filter(visible).map((el) => (
+                el.textContent.replace(/\\s+/g, " ").trim()
+            )).filter(Boolean);
+
+            if (errors.length) {
+                return errors.join(" ");
+            }
+
+            const captcha = document.querySelector(
+                '[data-gigya-name="saptcha"][data-is-active="true"]'
+            );
+            if (captcha && visible(captcha)) {
+                return "Weidemann login is showing a captcha.";
+            }
+
+            const verification = document.querySelector(
+                ".gigya-composite-control-tfa-verification-widget, .gigya-tfa"
+            );
+            if (verification && visible(verification)) {
+                return "Weidemann login is asking for a verification code.";
+            }
+
+            return "";
+        }"""
+    )
+
+
+def _wait_until_shop(context, page):
+    shop_page = None
+
+    for _ in range(90):
+        for open_page in context.pages:
+            if "shop.weidemann-online.com" in open_page.url:
+                shop_page = open_page
+                break
+
+        if shop_page is not None:
+            break
+
+        try:
+            problem = _visible_login_problem(page)
+        except Exception:
+            problem = ""
+
+        if problem:
+            raise RuntimeError(problem)
+
+        page.wait_for_timeout(1000)
+
+    if shop_page is None:
+        try:
+            problem = _visible_login_problem(page)
+        except Exception:
+            problem = ""
+
+        if problem:
+            raise RuntimeError(problem)
+
+        raise RuntimeError(
+            "Weidemann login did not return to the shop. "
+            f"Current URL: {page.url}"
+        )
+
+    try:
+        shop_page.wait_for_load_state(
+            "domcontentloaded",
+            timeout=15000,
+        )
+    except Exception:
+        pass
+
+    return shop_page
+
+
 def login_with_playwright(username, password):
     playwright = sync_playwright().start()
     browser = None
@@ -61,59 +155,48 @@ def login_with_playwright(username, password):
 
         print("4. Username entered", flush=True)
 
-        continue_button = page.locator(
-            'input[type="submit"]:visible, '
-            'button[type="submit"]:visible'
-        ).first
-
-        continue_button.wait_for(
-            state="visible",
-            timeout=15000,
-        )
-
-        continue_button.click()
+        _submit_containing_form(username_input)
 
         print("5. Username step submitted", flush=True)
 
         password_input = page.locator(
-            'input[type="password"]:visible'
-        ).first
-
-        password_input.wait_for(
-            state="visible",
-            timeout=15000,
+            'input[data-gigya-name="password"]:visible'
         )
 
-        password_input.fill(password)
+        try:
+            password_input.first.wait_for(
+                state="visible",
+                timeout=8000,
+            )
+        except Exception:
+            password_method = page.locator(
+                '[data-auth-method="password"]:visible'
+            )
+            if password_method.count() == 0:
+                raise
+            password_method.first.click()
+            password_input.first.wait_for(
+                state="visible",
+                timeout=15000,
+            )
+
+        password_input.first.fill(password)
 
         print("6. Password entered", flush=True)
 
-        login_button = page.locator(
-            'input[type="submit"]:visible, '
-            'button[type="submit"]:visible'
-        ).first
-
-        login_button.wait_for(
-            state="visible",
-            timeout=15000,
-        )
-
         print("7. Submitting password...", flush=True)
 
-        login_button.click()
+        _submit_containing_form(password_input.first)
 
         print("URL after login:", page.url, flush=True)
 
-        page.wait_for_url(
-            "**shop.weidemann-online.com/estore/pgk/de/**",
-            timeout=60000,
-        )
+        shop_page = _wait_until_shop(context, page)
 
         print("8. Returned to Weidemann", flush=True)
 
-        page.wait_for_timeout(3000)
+        shop_page.wait_for_timeout(3000)
 
-        print("9. Final browser URL:", page.url, flush=True)
+        print("9. Final browser URL:", shop_page.url, flush=True)
 
         return playwright, browser, context
 
@@ -378,9 +461,11 @@ def get_drawing_assets_from_metadata_url(
 # FULL MACHINE RETRIEVAL
 # --------------------------------------------------
 
-def get_weidemann_machine_data(serial):
-    username = os.getenv("WEIDEMANN_USERNAME")
-    password = os.getenv("WEIDEMANN_PASSWORD")
+def get_weidemann_machine_data(serial, username=None, password=None):
+    if username is None:
+        username = os.getenv("WEIDEMANN_USERNAME")
+    if password is None:
+        password = os.getenv("WEIDEMANN_PASSWORD")
 
     if not username or not password:
         raise RuntimeError(
