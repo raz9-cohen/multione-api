@@ -68,12 +68,23 @@ def _visible_login_problem(page):
     )
 
 
+def _shop_session_ready(url):
+    parsed = urlparse(url)
+    if parsed.hostname != "shop.weidemann-online.com":
+        return False
+    if "gigyaraas/login" in parsed.path:
+        return False
+    if "sso.login" in (parsed.query or ""):
+        return False
+    return True
+
+
 def _wait_until_shop(context, page):
     shop_page = None
 
     for _ in range(90):
         for open_page in context.pages:
-            if urlparse(open_page.url).hostname == "shop.weidemann-online.com":
+            if _shop_session_ready(open_page.url):
                 shop_page = open_page
                 break
 
